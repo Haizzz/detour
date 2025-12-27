@@ -1,0 +1,10 @@
+[package]
+name = "detour"
+version = "0.1.0"
+edition = "2024"
+description = "Performance focused DNS proxy"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros"] }
+
