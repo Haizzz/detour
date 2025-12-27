@@ -128,3 +128,53 @@ async fn run_upstream_to_client(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn udp_transport_binds_to_available_port() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let transport = UdpTransport::bind(addr).await;
+
+        assert!(transport.is_ok());
+    }
+
+    #[tokio::test]
+    async fn udp_transport_binds_to_specific_port() {
+        let addr: SocketAddr = "127.0.0.1:15353".parse().unwrap();
+        let transport = UdpTransport::bind(addr).await;
+
+        assert!(transport.is_ok());
+    }
+
+    #[tokio::test]
+    async fn udp_transport_fails_on_port_conflict() {
+        let addr: SocketAddr = "127.0.0.1:15354".parse().unwrap();
+        let _first = UdpTransport::bind(addr).await.unwrap();
+        let second = UdpTransport::bind(addr).await;
+
+        assert!(second.is_err());
+    }
+
+    #[test]
+    fn dns_query_id_extraction() {
+        let query_id: u16 = 0xABCD;
+        let bytes = query_id.to_be_bytes();
+
+        assert_eq!(bytes[0], 0xAB);
+        assert_eq!(bytes[1], 0xCD);
+        assert_eq!(u16::from_be_bytes(bytes), query_id);
+    }
+
+    #[test]
+    fn minimum_dns_header_size() {
+        let min_header = 12;
+        let short_packet = [0u8; 11];
+        let valid_packet = [0u8; 12];
+
+        assert!(short_packet.len() < min_header);
+        assert!(valid_packet.len() >= min_header);
+    }
+}

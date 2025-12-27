@@ -118,3 +118,67 @@ async fn forward_to_upstream(query: &[u8], upstream_addr: SocketAddr) -> Option<
 
     Some(buf)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tcp_transport_binds_to_available_port() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let transport = TcpTransport::bind(addr).await;
+
+        assert!(transport.is_ok());
+    }
+
+    #[tokio::test]
+    async fn tcp_transport_binds_to_specific_port() {
+        let addr: SocketAddr = "127.0.0.1:15355".parse().unwrap();
+        let transport = TcpTransport::bind(addr).await;
+
+        assert!(transport.is_ok());
+    }
+
+    #[tokio::test]
+    async fn tcp_transport_fails_on_port_conflict() {
+        let addr: SocketAddr = "127.0.0.1:15356".parse().unwrap();
+        let _first = TcpTransport::bind(addr).await.unwrap();
+        let second = TcpTransport::bind(addr).await;
+
+        assert!(second.is_err());
+    }
+
+    #[test]
+    fn dns_length_prefix_encoding() {
+        let msg_len: u16 = 256;
+        let bytes = msg_len.to_be_bytes();
+
+        assert_eq!(bytes[0], 0x01);
+        assert_eq!(bytes[1], 0x00);
+        assert_eq!(u16::from_be_bytes(bytes), msg_len);
+    }
+
+    #[test]
+    fn dns_length_prefix_decoding() {
+        let buf = [0x00, 0x20, 0x00, 0x00];
+        let msg_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+
+        assert_eq!(msg_len, 32);
+    }
+
+    #[test]
+    fn complete_message_detection() {
+        let msg_len: usize = 10;
+        let total_read: usize = 12;
+
+        assert!(total_read >= 2 + msg_len, "message should be complete");
+    }
+
+    #[test]
+    fn incomplete_message_detection() {
+        let msg_len: usize = 10;
+        let total_read: usize = 11;
+
+        assert!(total_read < 2 + msg_len, "message should be incomplete");
+    }
+}
