@@ -75,6 +75,30 @@ dig @127.0.0.1 -p 5353 google.com        # UDP
 dig @127.0.0.1 -p 5353 +tcp google.com   # TCP
 ```
 
+## Benchmarks
+
+Run benchmarks with:
+```bash
+cargo bench
+```
+
+Run a specific benchmark:
+```bash
+cargo bench -- extract_query_id
+```
+
+Available benchmarks:
+- `extract_query_id` - DNS query ID extraction from packet header
+- `validate_dns_packet` - Packet validation (minimum size check)
+- `pending_queries_insert` - HashMap insert for pending query tracking
+- `pending_queries_lookup_remove` - HashMap lookup and remove operations
+- `buffer_allocation_stack` - Stack buffer allocation (4KB)
+- `buffer_allocation_vec` - Heap buffer allocation (4KB)
+- `create_dns_query_short` - DNS query packet creation (short domain)
+- `create_dns_query_long` - DNS query packet creation (long domain)
+- `packet_copy_to_buffer` - Packet copy to fixed buffer
+- `throughput/process_1000_queries` - End-to-end throughput simulation
+
 ## License
 
 MIT

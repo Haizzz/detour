@@ -8,3 +8,9 @@ description = "Performance focused DNS proxy"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros"] }
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "dns_proxy"
+harness = false
