@@ -28,6 +28,10 @@ struct Args {
     /// Upstream DNS server (host:port)
     #[arg(short, long, default_value = "8.8.8.8:53")]
     upstream: String,
+
+    /// Print verbose logging (domain, blocked status, timing)
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 fn main() -> io::Result<()> {
@@ -42,6 +46,7 @@ fn main() -> io::Result<()> {
     let config = proxy::ProxyConfig {
         bind_addr,
         upstream_addr,
+        verbose: args.verbose,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

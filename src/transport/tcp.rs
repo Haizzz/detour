@@ -7,6 +7,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -33,18 +34,18 @@ impl TcpTransport {
     /// Start the TCP transport.
     ///
     /// Spawns an accept loop that handles each connection in a separate task.
-    pub fn start(self, upstream_addr: SocketAddr, resolver: Rc<Resolver>) {
-        tokio::task::spawn_local(run_accept_loop(self.listener, upstream_addr, resolver));
+    pub fn start(self, upstream_addr: SocketAddr, resolver: Rc<Resolver>, verbose: bool) {
+        tokio::task::spawn_local(run_accept_loop(self.listener, upstream_addr, resolver, verbose));
     }
 }
 
 /// Accept loop - spawns a handler task for each incoming connection.
-async fn run_accept_loop(listener: TcpListener, upstream_addr: SocketAddr, resolver: Rc<Resolver>) {
+async fn run_accept_loop(listener: TcpListener, upstream_addr: SocketAddr, resolver: Rc<Resolver>, verbose: bool) {
     loop {
         match listener.accept().await {
             Ok((client, _)) => {
                 let resolver = resolver.clone();
-                tokio::task::spawn_local(handle_connection(client, upstream_addr, resolver));
+                tokio::task::spawn_local(handle_connection(client, upstream_addr, resolver, verbose));
             }
             Err(e) => {
                 eprintln!("TCP accept error: {}", e);
@@ -58,7 +59,10 @@ async fn handle_connection(
     mut client: TcpStream,
     upstream_addr: SocketAddr,
     resolver: Rc<Resolver>,
+    verbose: bool,
 ) {
+    let start_time = Instant::now();
+
     let query_with_len = match read_dns_message(&mut client).await {
         Some(q) => q,
         None => return,
@@ -72,14 +76,33 @@ async fn handle_connection(
 
     // Ask resolver what to do with this query
     match resolver.process_query(query) {
-        QueryAction::Blocked(response) => {
+        QueryAction::Blocked { response, domain } => {
             send_tcp_response(&mut client, &response).await;
+            if verbose {
+                let elapsed = start_time.elapsed();
+                println!(
+                    "[TCP] {} BLOCKED total={:.3}ms",
+                    domain,
+                    elapsed.as_secs_f64() * 1000.0
+                );
+            }
         }
-        QueryAction::Forward => {
+        QueryAction::Forward { domain } => {
+            let upstream_start = Instant::now();
             if let Some(response) = forward_to_upstream(query, upstream_addr).await {
+                let upstream_elapsed = upstream_start.elapsed();
                 // Notify resolver of response (for caching, etc.)
                 resolver.process_response(query, &response);
                 send_tcp_response(&mut client, &response).await;
+                if verbose {
+                    let total_elapsed = start_time.elapsed();
+                    println!(
+                        "[TCP] {} FORWARDED total={:.3}ms upstream={:.3}ms",
+                        domain,
+                        total_elapsed.as_secs_f64() * 1000.0,
+                        upstream_elapsed.as_secs_f64() * 1000.0
+                    );
+                }
             }
         }
     }

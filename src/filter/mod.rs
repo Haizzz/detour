@@ -7,6 +7,13 @@ mod blocklist;
 
 pub use blocklist::Blocklist;
 
+/// Extract the queried domain name from a DNS query packet.
+///
+/// Returns `None` if the packet is malformed or too short.
+pub fn get_domain(query: &[u8]) -> Option<String> {
+    extract_domain(query)
+}
+
 /// Check if a DNS query should be blocked and return an appropriate response.
 ///
 /// Returns `Some(response)` if the query should be blocked, `None` if it should

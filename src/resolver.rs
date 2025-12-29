@@ -7,14 +7,19 @@
 //!
 //! Transports handle the actual I/O, resolver handles decisions.
 
-use crate::filter::{Blocklist, filter_query};
+use crate::filter::{Blocklist, filter_query, get_domain};
 
 /// Action to take for a DNS query.
 pub enum QueryAction {
     /// Query is blocked, return this response immediately.
-    Blocked(Vec<u8>),
+    Blocked {
+        response: Vec<u8>,
+        domain: String,
+    },
     /// Query should be forwarded to upstream.
-    Forward,
+    Forward {
+        domain: String,
+    },
     // Future: Cached(Vec<u8>), RaceUpstreams, etc.
 }
 
@@ -38,9 +43,14 @@ impl Resolver {
     /// This is the main entry point for transports. Call this with the raw
     /// DNS query (without TCP length prefix) to get the action to take.
     pub fn process_query(&self, query: &[u8]) -> QueryAction {
+        let domain = get_domain(query).unwrap_or_else(|| "<unknown>".to_string());
+
         // Step 1: Check blocklist
         if let Some(blocked_response) = filter_query(&self.blocklist, query) {
-            return QueryAction::Blocked(blocked_response);
+            return QueryAction::Blocked {
+                response: blocked_response,
+                domain,
+            };
         }
 
         // Step 2: TODO - Check cache
@@ -49,7 +59,7 @@ impl Resolver {
         // }
 
         // Step 3: Forward to upstream
-        QueryAction::Forward
+        QueryAction::Forward { domain }
     }
 
     /// Called when we receive a response from upstream.
