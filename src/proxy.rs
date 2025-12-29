@@ -14,8 +14,8 @@ use crate::transport::{tcp::TcpTransport, udp::UdpTransport};
 pub struct ProxyConfig {
     /// Local address to bind (e.g., 127.0.0.1:5353)
     pub bind_addr: SocketAddr,
-    /// Upstream DNS server address (e.g., 8.8.8.8:53)
-    pub upstream_addr: SocketAddr,
+    /// Upstream DNS server addresses (races all, uses first response)
+    pub upstreams: Vec<SocketAddr>,
     /// Enable verbose logging (domain, blocked status, timing)
     pub verbose: bool,
 }
@@ -33,13 +33,14 @@ pub async fn run(config: ProxyConfig) -> io::Result<()> {
         config.bind_addr,
         resolver.blocked_count()
     );
-    println!("Forwarding to upstream: {}", config.upstream_addr);
+    let upstream_strs: Vec<_> = config.upstreams.iter().map(|a| a.to_string()).collect();
+    println!("Racing upstreams: {}", upstream_strs.join(", "));
 
-    let udp = UdpTransport::bind(config.bind_addr).await?;
+    let udp = UdpTransport::bind(config.bind_addr, config.upstreams.len()).await?;
     let tcp = TcpTransport::bind(config.bind_addr).await?;
 
-    udp.start(config.upstream_addr, resolver.clone(), config.verbose);
-    tcp.start(config.upstream_addr, resolver, config.verbose);
+    udp.start(config.upstreams.clone(), resolver.clone(), config.verbose);
+    tcp.start(config.upstreams, resolver, config.verbose);
 
     // Keep running forever
     std::future::pending::<()>().await;

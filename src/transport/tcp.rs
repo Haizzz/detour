@@ -1,8 +1,8 @@
 //! TCP transport for DNS queries.
 //!
 //! Handles DNS queries over TCP. Each client connection is handled
-//! independently - we read the query, forward to upstream, and return
-//! the response. TCP DNS messages are prefixed with a 2-byte length.
+//! independently - we read the query, race to multiple upstreams, and return
+//! the first response. TCP DNS messages are prefixed with a 2-byte length.
 
 use std::io;
 use std::net::SocketAddr;
@@ -15,10 +15,15 @@ use crate::resolver::{QueryAction, Resolver};
 
 use super::MAX_DNS_PACKET_SIZE;
 
+fn log_blocked(domain: &str, elapsed_ms: f64) {
+    println!("[TCP] {} BLOCKED total={:.3}ms", domain, elapsed_ms);
+}
+
+fn log_forwarded(domain: &str, total_ms: f64, upstream_ms: f64, from: SocketAddr) {
+    println!("[TCP] {} FORWARDED total={:.3}ms upstream={:.3}ms (from {})", domain, total_ms, upstream_ms, from);
+}
+
 /// TCP transport for DNS proxy.
-///
-/// Binds to a local address and accepts connections from clients.
-/// Each connection is handled in a separate task.
 pub struct TcpTransport {
     listener: TcpListener,
 }
@@ -27,25 +32,27 @@ impl TcpTransport {
     /// Bind a TCP listener for the transport.
     pub async fn bind(addr: SocketAddr) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-
         Ok(Self { listener })
     }
 
     /// Start the TCP transport.
-    ///
-    /// Spawns an accept loop that handles each connection in a separate task.
-    pub fn start(self, upstream_addr: SocketAddr, resolver: Rc<Resolver>, verbose: bool) {
-        tokio::task::spawn_local(run_accept_loop(self.listener, upstream_addr, resolver, verbose));
+    pub fn start(self, upstreams: Vec<SocketAddr>, resolver: Rc<Resolver>, verbose: bool) {
+        tokio::task::spawn_local(run_accept_loop(self.listener, upstreams, resolver, verbose));
     }
 }
 
-/// Accept loop - spawns a handler task for each incoming connection.
-async fn run_accept_loop(listener: TcpListener, upstream_addr: SocketAddr, resolver: Rc<Resolver>, verbose: bool) {
+async fn run_accept_loop(
+    listener: TcpListener,
+    upstreams: Vec<SocketAddr>,
+    resolver: Rc<Resolver>,
+    verbose: bool,
+) {
     loop {
         match listener.accept().await {
             Ok((client, _)) => {
                 let resolver = resolver.clone();
-                tokio::task::spawn_local(handle_connection(client, upstream_addr, resolver, verbose));
+                let upstreams = upstreams.clone();
+                tokio::task::spawn_local(handle_connection(client, upstreams, resolver, verbose));
             }
             Err(e) => {
                 eprintln!("TCP accept error: {}", e);
@@ -54,10 +61,9 @@ async fn run_accept_loop(listener: TcpListener, upstream_addr: SocketAddr, resol
     }
 }
 
-/// Handle a single TCP connection: read query, process through resolver, respond.
 async fn handle_connection(
     mut client: TcpStream,
-    upstream_addr: SocketAddr,
+    upstreams: Vec<SocketAddr>,
     resolver: Rc<Resolver>,
     verbose: bool,
 ) {
@@ -68,39 +74,29 @@ async fn handle_connection(
         None => return,
     };
 
-    // TCP DNS: first 2 bytes are length prefix, actual DNS query starts at byte 2
     if query_with_len.len() <= 2 {
         return;
     }
     let query = &query_with_len[2..];
 
-    // Ask resolver what to do with this query
     match resolver.process_query(query) {
         QueryAction::Blocked { response, domain } => {
             send_tcp_response(&mut client, &response).await;
             if verbose {
-                let elapsed = start_time.elapsed();
-                println!(
-                    "[TCP] {} BLOCKED total={:.3}ms",
-                    domain,
-                    elapsed.as_secs_f64() * 1000.0
-                );
+                log_blocked(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
             }
         }
         QueryAction::Forward { domain } => {
             let upstream_start = Instant::now();
-            if let Some(response) = forward_to_upstream(query, upstream_addr).await {
-                let upstream_elapsed = upstream_start.elapsed();
-                // Notify resolver of response (for caching, etc.)
+            if let Some((response, winner)) = race_upstreams(query, &upstreams).await {
                 resolver.process_response(query, &response);
                 send_tcp_response(&mut client, &response).await;
                 if verbose {
-                    let total_elapsed = start_time.elapsed();
-                    println!(
-                        "[TCP] {} FORWARDED total={:.3}ms upstream={:.3}ms",
-                        domain,
-                        total_elapsed.as_secs_f64() * 1000.0,
-                        upstream_elapsed.as_secs_f64() * 1000.0
+                    log_forwarded(
+                        &domain,
+                        start_time.elapsed().as_secs_f64() * 1000.0,
+                        upstream_start.elapsed().as_secs_f64() * 1000.0,
+                        winner,
                     );
                 }
             }
@@ -108,17 +104,12 @@ async fn handle_connection(
     }
 }
 
-/// Send a DNS response over TCP with length prefix.
 async fn send_tcp_response(client: &mut TcpStream, response: &[u8]) {
     let len_prefix = (response.len() as u16).to_be_bytes();
     let _ = client.write_all(&len_prefix).await;
     let _ = client.write_all(response).await;
 }
 
-/// Read a length-prefixed DNS message from a TCP stream.
-///
-/// TCP DNS messages start with a 2-byte big-endian length prefix.
-/// Returns the complete message including the length prefix.
 async fn read_dns_message(stream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut buf = vec![0u8; MAX_DNS_PACKET_SIZE];
     let mut total_read = 0;
@@ -134,26 +125,51 @@ async fn read_dns_message(stream: &mut TcpStream) -> Option<Vec<u8>> {
             let msg_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
             if total_read >= 2 + msg_len {
                 buf.truncate(total_read);
-
                 return Some(buf);
             }
         }
     }
 }
 
-/// Forward a DNS query to the upstream server and return the response.
-///
-/// Query should NOT include the TCP length prefix.
-/// Returns the response WITHOUT length prefix.
+async fn race_upstreams(query: &[u8], upstreams: &[SocketAddr]) -> Option<(Vec<u8>, SocketAddr)> {
+    if upstreams.is_empty() {
+        return None;
+    }
+
+    if upstreams.len() == 1 {
+        return forward_to_upstream(query, upstreams[0])
+            .await
+            .map(|r| (r, upstreams[0]));
+    }
+
+    use futures::future::select_all;
+
+    let futures: Vec<_> = upstreams
+        .iter()
+        .map(|&addr| {
+            let q = query.to_vec();
+            Box::pin(async move { (forward_to_upstream(&q, addr).await, addr) })
+        })
+        .collect();
+
+    let mut remaining = futures;
+    while !remaining.is_empty() {
+        let ((result, addr), _, rest) = select_all(remaining).await;
+        if let Some(response) = result {
+            return Some((response, addr));
+        }
+        remaining = rest;
+    }
+    None
+}
+
 async fn forward_to_upstream(query: &[u8], upstream_addr: SocketAddr) -> Option<Vec<u8>> {
     let mut upstream = TcpStream::connect(upstream_addr).await.ok()?;
 
-    // Send with length prefix
     let len_prefix = (query.len() as u16).to_be_bytes();
     upstream.write_all(&len_prefix).await.ok()?;
     upstream.write_all(query).await.ok()?;
 
-    // Read response
     let mut buf = vec![0u8; MAX_DNS_PACKET_SIZE];
     let mut total_read = 0;
 
@@ -176,6 +192,5 @@ async fn forward_to_upstream(query: &[u8], upstream_addr: SocketAddr) -> Option<
         return None;
     }
 
-    // Return without length prefix
     Some(buf[2..total_read].to_vec())
 }

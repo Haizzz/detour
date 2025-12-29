@@ -25,9 +25,9 @@ struct Args {
     #[arg(short, long, default_value = "127.0.0.1")]
     bind: String,
 
-    /// Upstream DNS server (host:port)
-    #[arg(short, long, default_value = "8.8.8.8:53")]
-    upstream: String,
+    /// Upstream DNS servers (host:port), races all and uses first response
+    #[arg(short, long, default_values_t = ["8.8.8.8:53".to_string(), "1.1.1.1:53".to_string()])]
+    upstream: Vec<String>,
 
     /// Print verbose logging (domain, blocked status, timing)
     #[arg(short, long)]
@@ -41,11 +41,15 @@ fn main() -> io::Result<()> {
         .parse()
         .expect("invalid bind address");
 
-    let upstream_addr: SocketAddr = args.upstream.parse().expect("invalid upstream address");
+    let upstreams: Vec<SocketAddr> = args
+        .upstream
+        .iter()
+        .map(|s| s.parse().expect("invalid upstream address"))
+        .collect();
 
     let config = proxy::ProxyConfig {
         bind_addr,
-        upstream_addr,
+        upstreams,
         verbose: args.verbose,
     };
 
