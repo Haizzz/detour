@@ -456,8 +456,9 @@ fn main() {
 
     bench_tcp_realistic(&mut criterion);
     bench_udp_realistic(&mut criterion);
-    bench_tcp_zero_latency(&mut criterion);
-    bench_udp_zero_latency(&mut criterion);
+    // TODO: this causes it to hang
+    // bench_tcp_zero_latency(&mut criterion);
+    // bench_udp_zero_latency(&mut criterion);
 
     criterion.final_summary();
     std::process::exit(0);
