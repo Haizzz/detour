@@ -8,7 +8,7 @@
 //!
 //! Also includes zero-latency benchmarks to measure pure proxy overhead.
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
+use criterion::{BenchmarkId, Criterion, Throughput};
 use rand::Rng;
 use std::net::SocketAddr;
 use std::rc::Rc;
@@ -451,18 +451,14 @@ fn bench_udp_zero_latency(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_tcp_realistic,
-    bench_udp_realistic,
-    bench_tcp_zero_latency,
-    bench_udp_zero_latency
-);
-
 fn main() {
-    benches();
-    criterion::Criterion::default()
-        .configure_from_args()
-        .final_summary();
+    let mut criterion = Criterion::default().configure_from_args();
+
+    bench_tcp_realistic(&mut criterion);
+    bench_udp_realistic(&mut criterion);
+    bench_tcp_zero_latency(&mut criterion);
+    bench_udp_zero_latency(&mut criterion);
+
+    criterion.final_summary();
     std::process::exit(0);
 }
