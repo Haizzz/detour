@@ -5,10 +5,13 @@
 //! - Cloudflare (1.1.1.1): ~5-18ms average
 //! - Google (8.8.8.8): ~7-24ms average
 //! We simulate ~15ms average with ±5ms jitter.
+//!
+//! Also includes zero-latency benchmarks to measure pure proxy overhead.
 
 use criterion::{criterion_group, BenchmarkId, Criterion, Throughput};
 use rand::Rng;
 use std::net::SocketAddr;
+use std::sync::mpsc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -20,10 +23,17 @@ use detour::transport::udp::UdpTransport;
 
 const MAX_DNS_PACKET_SIZE: usize = 4096;
 
+// Ports for realistic latency benchmarks
 const TCP_PROXY_ADDR: &str = "127.0.0.1:15354";
 const UDP_PROXY_ADDR: &str = "127.0.0.1:15355";
 const TCP_UPSTREAM_ADDR: &str = "127.0.0.1:15356";
 const UDP_UPSTREAM_ADDR: &str = "127.0.0.1:15357";
+
+// Ports for zero-latency benchmarks
+const TCP_PROXY_ADDR_ZERO: &str = "127.0.0.1:15360";
+const UDP_PROXY_ADDR_ZERO: &str = "127.0.0.1:15361";
+const TCP_UPSTREAM_ADDR_ZERO: &str = "127.0.0.1:15362";
+const UDP_UPSTREAM_ADDR_ZERO: &str = "127.0.0.1:15363";
 
 /// Simulated upstream latency (based on real-world DNS benchmarks)
 const BASE_LATENCY_MS: u64 = 15;
@@ -90,7 +100,7 @@ async fn simulate_upstream_latency() {
 }
 
 /// Mock TCP upstream with simulated latency
-async fn mock_tcp_upstream(listener: TcpListener) {
+async fn mock_tcp_upstream(listener: TcpListener, with_latency: bool) {
     let response = build_tcp_dns_response();
     loop {
         if let Ok((mut stream, _)) = listener.accept().await {
@@ -98,7 +108,9 @@ async fn mock_tcp_upstream(listener: TcpListener) {
             tokio::spawn(async move {
                 let mut buf = [0u8; MAX_DNS_PACKET_SIZE];
                 if stream.read(&mut buf).await.is_ok() {
-                    simulate_upstream_latency().await;
+                    if with_latency {
+                        simulate_upstream_latency().await;
+                    }
                     let _ = stream.write_all(&response).await;
                 }
             });
@@ -107,48 +119,55 @@ async fn mock_tcp_upstream(listener: TcpListener) {
 }
 
 /// Mock UDP upstream with simulated latency
-async fn mock_udp_upstream(socket: UdpSocket) {
+async fn mock_udp_upstream(socket: UdpSocket, with_latency: bool) {
     let response = build_dns_response();
     let mut buf = [0u8; MAX_DNS_PACKET_SIZE];
     loop {
         if let Ok((_, src)) = socket.recv_from(&mut buf).await {
-            simulate_upstream_latency().await;
+            if with_latency {
+                simulate_upstream_latency().await;
+            }
             let _ = socket.send_to(&response, src).await;
         }
     }
 }
 
-fn start_tcp_mock_upstream() {
-    let upstream_addr: SocketAddr = TCP_UPSTREAM_ADDR.parse().unwrap();
+fn start_tcp_mock_upstream(addr: &str, with_latency: bool) {
+    let upstream_addr: SocketAddr = addr.parse().unwrap();
+    let (tx, rx) = mpsc::channel();
 
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let listener = TcpListener::bind(upstream_addr).await.unwrap();
-            mock_tcp_upstream(listener).await;
+            tx.send(()).unwrap(); // Signal ready
+            mock_tcp_upstream(listener, with_latency).await;
         });
     });
 
-    std::thread::sleep(Duration::from_millis(50));
+    rx.recv().expect("Failed to start TCP mock upstream");
 }
 
-fn start_udp_mock_upstream() {
-    let upstream_addr: SocketAddr = UDP_UPSTREAM_ADDR.parse().unwrap();
+fn start_udp_mock_upstream(addr: &str, with_latency: bool) {
+    let upstream_addr: SocketAddr = addr.parse().unwrap();
+    let (tx, rx) = mpsc::channel();
 
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let socket = UdpSocket::bind(upstream_addr).await.unwrap();
-            mock_udp_upstream(socket).await;
+            tx.send(()).unwrap(); // Signal ready
+            mock_udp_upstream(socket, with_latency).await;
         });
     });
 
-    std::thread::sleep(Duration::from_millis(50));
+    rx.recv().expect("Failed to start UDP mock upstream");
 }
 
-fn start_tcp_proxy() {
-    let proxy_addr: SocketAddr = TCP_PROXY_ADDR.parse().unwrap();
-    let upstream_addr: SocketAddr = TCP_UPSTREAM_ADDR.parse().unwrap();
+fn start_tcp_proxy(proxy_addr: &str, upstream_addr: &str) {
+    let proxy_addr: SocketAddr = proxy_addr.parse().unwrap();
+    let upstream_addr: SocketAddr = upstream_addr.parse().unwrap();
+    let (tx, rx) = mpsc::channel();
 
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
@@ -157,6 +176,7 @@ fn start_tcp_proxy() {
         local.block_on(&rt, async {
             let transport = TcpTransport::bind(proxy_addr).await.unwrap();
             transport.start(upstream_addr);
+            tx.send(()).unwrap(); // Signal ready
 
             loop {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -164,12 +184,13 @@ fn start_tcp_proxy() {
         });
     });
 
-    std::thread::sleep(Duration::from_millis(50));
+    rx.recv().expect("Failed to start TCP proxy");
 }
 
-fn start_udp_proxy() {
-    let proxy_addr: SocketAddr = UDP_PROXY_ADDR.parse().unwrap();
-    let upstream_addr: SocketAddr = UDP_UPSTREAM_ADDR.parse().unwrap();
+fn start_udp_proxy(proxy_addr: &str, upstream_addr: &str) {
+    let proxy_addr: SocketAddr = proxy_addr.parse().unwrap();
+    let upstream_addr: SocketAddr = upstream_addr.parse().unwrap();
+    let (tx, rx) = mpsc::channel();
 
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
@@ -178,6 +199,7 @@ fn start_udp_proxy() {
         local.block_on(&rt, async {
             let transport = UdpTransport::bind(proxy_addr).await.unwrap();
             transport.start(upstream_addr);
+            tx.send(()).unwrap(); // Signal ready
 
             loop {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -185,12 +207,16 @@ fn start_udp_proxy() {
         });
     });
 
-    std::thread::sleep(Duration::from_millis(50));
+    rx.recv().expect("Failed to start UDP proxy");
 }
 
-fn bench_tcp_request(c: &mut Criterion) {
-    start_tcp_mock_upstream();
-    start_tcp_proxy();
+// ============================================================================
+// Benchmarks with realistic upstream latency (~15ms ±5ms)
+// ============================================================================
+
+fn bench_tcp_realistic(c: &mut Criterion) {
+    start_tcp_mock_upstream(TCP_UPSTREAM_ADDR, true);
+    start_tcp_proxy(TCP_PROXY_ADDR, TCP_UPSTREAM_ADDR);
 
     let rt = Runtime::new().unwrap();
     let proxy_addr: SocketAddr = TCP_PROXY_ADDR.parse().unwrap();
@@ -198,10 +224,10 @@ fn bench_tcp_request(c: &mut Criterion) {
     let query = build_tcp_dns_query();
     let query_size = query.len() as u64;
 
-    let mut group = c.benchmark_group("tcp");
+    let mut group = c.benchmark_group("tcp_realistic");
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function(BenchmarkId::new("request_handling", "latency"), |b| {
+    group.bench_function(BenchmarkId::new("request", "latency"), |b| {
         b.to_async(&rt).iter(|| async {
             let mut client = TcpStream::connect(proxy_addr).await.unwrap();
             let query = build_tcp_dns_query();
@@ -227,7 +253,7 @@ fn bench_tcp_request(c: &mut Criterion) {
     });
 
     group.throughput(Throughput::Bytes(query_size));
-    group.bench_function(BenchmarkId::new("request_handling", "bytes"), |b| {
+    group.bench_function(BenchmarkId::new("request", "bytes"), |b| {
         b.to_async(&rt).iter(|| async {
             let mut client = TcpStream::connect(proxy_addr).await.unwrap();
             let query = build_tcp_dns_query();
@@ -255,9 +281,9 @@ fn bench_tcp_request(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_udp_request(c: &mut Criterion) {
-    start_udp_mock_upstream();
-    start_udp_proxy();
+fn bench_udp_realistic(c: &mut Criterion) {
+    start_udp_mock_upstream(UDP_UPSTREAM_ADDR, true);
+    start_udp_proxy(UDP_PROXY_ADDR, UDP_UPSTREAM_ADDR);
 
     let rt = Runtime::new().unwrap();
     let proxy_addr: SocketAddr = UDP_PROXY_ADDR.parse().unwrap();
@@ -265,10 +291,10 @@ fn bench_udp_request(c: &mut Criterion) {
     let query = build_dns_query();
     let query_size = query.len() as u64;
 
-    let mut group = c.benchmark_group("udp");
+    let mut group = c.benchmark_group("udp_realistic");
     group.throughput(Throughput::Elements(1));
 
-    group.bench_function(BenchmarkId::new("request_handling", "latency"), |b| {
+    group.bench_function(BenchmarkId::new("request", "latency"), |b| {
         b.to_async(&rt).iter(|| async {
             let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
             let query = build_dns_query();
@@ -284,7 +310,7 @@ fn bench_udp_request(c: &mut Criterion) {
     });
 
     group.throughput(Throughput::Bytes(query_size));
-    group.bench_function(BenchmarkId::new("request_handling", "bytes"), |b| {
+    group.bench_function(BenchmarkId::new("request", "bytes"), |b| {
         b.to_async(&rt).iter(|| async {
             let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
             let query = build_dns_query();
@@ -302,10 +328,136 @@ fn bench_udp_request(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_tcp_request, bench_udp_request);
+// ============================================================================
+// Zero-latency benchmarks (pure proxy overhead)
+// ============================================================================
+
+fn bench_tcp_zero_latency(c: &mut Criterion) {
+    start_tcp_mock_upstream(TCP_UPSTREAM_ADDR_ZERO, false);
+    start_tcp_proxy(TCP_PROXY_ADDR_ZERO, TCP_UPSTREAM_ADDR_ZERO);
+
+    let rt = Runtime::new().unwrap();
+    let proxy_addr: SocketAddr = TCP_PROXY_ADDR_ZERO.parse().unwrap();
+
+    let query = build_tcp_dns_query();
+    let query_size = query.len() as u64;
+
+    let mut group = c.benchmark_group("tcp_zero_latency");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function(BenchmarkId::new("request", "latency"), |b| {
+        b.to_async(&rt).iter(|| async {
+            let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+            let query = build_tcp_dns_query();
+            client.write_all(&query).await.unwrap();
+
+            let mut buf = [0u8; MAX_DNS_PACKET_SIZE];
+            let mut total = 0;
+            loop {
+                let n = client.read(&mut buf[total..]).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                total += n;
+                if total >= 2 {
+                    let msg_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+                    if total >= 2 + msg_len {
+                        break;
+                    }
+                }
+            }
+            total
+        });
+    });
+
+    group.throughput(Throughput::Bytes(query_size));
+    group.bench_function(BenchmarkId::new("request", "bytes"), |b| {
+        b.to_async(&rt).iter(|| async {
+            let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+            let query = build_tcp_dns_query();
+            client.write_all(&query).await.unwrap();
+
+            let mut buf = [0u8; MAX_DNS_PACKET_SIZE];
+            let mut total = 0;
+            loop {
+                let n = client.read(&mut buf[total..]).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                total += n;
+                if total >= 2 {
+                    let msg_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+                    if total >= 2 + msg_len {
+                        break;
+                    }
+                }
+            }
+            total
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_udp_zero_latency(c: &mut Criterion) {
+    start_udp_mock_upstream(UDP_UPSTREAM_ADDR_ZERO, false);
+    start_udp_proxy(UDP_PROXY_ADDR_ZERO, UDP_UPSTREAM_ADDR_ZERO);
+
+    let rt = Runtime::new().unwrap();
+    let proxy_addr: SocketAddr = UDP_PROXY_ADDR_ZERO.parse().unwrap();
+
+    let query = build_dns_query();
+    let query_size = query.len() as u64;
+
+    let mut group = c.benchmark_group("udp_zero_latency");
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function(BenchmarkId::new("request", "latency"), |b| {
+        b.to_async(&rt).iter(|| async {
+            let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let query = build_dns_query();
+            client.send_to(&query, proxy_addr).await.unwrap();
+
+            let mut buf = [0u8; MAX_DNS_PACKET_SIZE];
+            tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+        });
+    });
+
+    group.throughput(Throughput::Bytes(query_size));
+    group.bench_function(BenchmarkId::new("request", "bytes"), |b| {
+        b.to_async(&rt).iter(|| async {
+            let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let query = build_dns_query();
+            client.send_to(&query, proxy_addr).await.unwrap();
+
+            let mut buf = [0u8; MAX_DNS_PACKET_SIZE];
+            tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_tcp_realistic,
+    bench_udp_realistic,
+    bench_tcp_zero_latency,
+    bench_udp_zero_latency
+);
 
 fn main() {
     benches();
-    criterion::Criterion::default().configure_from_args().final_summary();
+    criterion::Criterion::default()
+        .configure_from_args()
+        .final_summary();
     std::process::exit(0);
 }
