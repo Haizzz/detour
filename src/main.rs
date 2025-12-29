@@ -20,7 +20,7 @@ use std::net::SocketAddr;
 #[command(about = "Performance focused DNS proxy", long_about = None)]
 struct Args {
     /// Local port to listen on
-    #[arg(short, long, default_value = "5353")]
+    #[arg(short, long, default_value = "53")]
     port: u16,
 
     /// Bind address
