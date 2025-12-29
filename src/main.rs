@@ -26,7 +26,12 @@ struct Args {
     bind: String,
 
     /// Upstream DNS servers (host:port), races all and uses first response
-    #[arg(short, long, default_values_t = ["8.8.8.8:53".to_string(), "1.1.1.1:53".to_string()])]
+    #[arg(short, long, default_values_t = [
+        "1.1.1.1:53".to_string(),
+        "1.0.0.1:53".to_string(),
+        "8.8.8.8:53".to_string(),
+        "8.8.4.4:53".to_string(),
+    ])]
     upstream: Vec<String>,
 
     /// Print verbose logging (domain, blocked status, timing)
