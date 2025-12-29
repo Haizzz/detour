@@ -70,6 +70,28 @@ Detour DNS proxy
 [2025-12-29 08:43:10] [UDP] ads.tracker.com BLOCKED total=0.015ms
 ```
 
+## Installation (Linux/systemd)
+
+Install as a systemd service:
+
+```bash
+cargo build --release
+sudo ./target/release/detour install
+```
+
+This copies the binary to `/usr/local/bin/detour` and enables the service.
+
+```bash
+# Check status
+systemctl status detour
+
+# View logs
+tail -f /var/log/detour.log
+
+# Uninstall
+sudo detour uninstall
+```
+
 ## Testing
 
 Using `dig` (Linux/macOS):

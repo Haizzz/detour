@@ -10,15 +10,17 @@ mod proxy;
 mod resolver;
 mod transport;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::io;
 use std::net::SocketAddr;
 
-/// Command line arguments for the DNS proxy.
 #[derive(Parser)]
 #[command(name = "detour")]
 #[command(about = "Performance focused DNS proxy", long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Local port to listen on
     #[arg(short, long, default_value = "53")]
     port: u16,
@@ -41,8 +43,23 @@ struct Args {
     verbose: bool,
 }
 
+#[derive(Subcommand)]
+enum Command {
+    /// Install detour as a systemd service
+    Install,
+    /// Uninstall the systemd service
+    Uninstall,
+}
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
+
+    if let Some(cmd) = args.command {
+        return match cmd {
+            Command::Install => install_service(),
+            Command::Uninstall => uninstall_service(),
+        };
+    }
 
     let bind_addr: SocketAddr = format!("{}:{}", args.bind, args.port)
         .parse()
@@ -66,4 +83,46 @@ fn main() -> io::Result<()> {
 
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, proxy::run(config))
+}
+
+const SERVICE_FILE: &str = include_str!("../detour.service");
+
+fn install_service() -> io::Result<()> {
+    use std::process::Command;
+
+    let exe = std::env::current_exe()?;
+    let bin_path = "/usr/local/bin/detour";
+    let service_path = "/etc/systemd/system/detour.service";
+
+    println!("Copying {} to {}", exe.display(), bin_path);
+    std::fs::copy(&exe, bin_path)?;
+
+    println!("Writing service file to {}", service_path);
+    std::fs::write(service_path, SERVICE_FILE)?;
+
+    println!("Enabling and starting service...");
+    Command::new("systemctl").args(["daemon-reload"]).status()?;
+    Command::new("systemctl")
+        .args(["enable", "--now", "detour"])
+        .status()?;
+
+    println!("Done! Check status with: systemctl status detour");
+    Ok(())
+}
+
+fn uninstall_service() -> io::Result<()> {
+    use std::process::Command;
+
+    println!("Stopping and disabling service...");
+    let _ = Command::new("systemctl")
+        .args(["disable", "--now", "detour"])
+        .status();
+
+    let _ = std::fs::remove_file("/etc/systemd/system/detour.service");
+    let _ = std::fs::remove_file("/usr/local/bin/detour");
+
+    Command::new("systemctl").args(["daemon-reload"]).status()?;
+
+    println!("Uninstalled.");
+    Ok(())
 }
