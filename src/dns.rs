@@ -11,7 +11,6 @@ pub struct DnsQuery {
     pub domain: String,
     pub qtype: u16,
     pub qclass: u16,
-    raw: Vec<u8>,
 }
 
 impl DnsQuery {
@@ -58,7 +57,6 @@ impl DnsQuery {
             domain: domain_parts.join(".").to_lowercase(),
             qtype,
             qclass,
-            raw: data.to_vec(),
         })
     }
 
@@ -119,8 +117,8 @@ impl DnsResponse {
             }],
             answers: vec![DnsRecord {
                 name: query.domain.clone(),
-                rtype: 1,  // A record
-                class: 1,  // IN
+                rtype: 1, // A record
+                class: 1, // IN
                 ttl: 300,
                 rdata: vec![0, 0, 0, 0], // 0.0.0.0
             }],
@@ -247,5 +245,4 @@ impl DnsResponse {
             Duration::from_secs(min_ttl as u64)
         }
     }
-
 }

@@ -6,7 +6,15 @@ description = "Performance focused DNS proxy"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = [
+    "rt",
+    "net",
+    "io-util",
+    "sync",
+    "macros",
+    "rt-multi-thread",
+    "time",
+] }
 futures = "0.3"
 
 [dev-dependencies]
@@ -20,4 +28,3 @@ harness = false
 [[bench]]
 name = "blocklist_bench"
 harness = false
-
