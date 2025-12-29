@@ -14,15 +14,7 @@ use tokio::net::UdpSocket;
 
 use crate::resolver::{QueryAction, Resolver};
 
-use super::MAX_DNS_PACKET_SIZE;
-
-fn log_blocked(domain: &str, elapsed_ms: f64) {
-    println!("[UDP] {} BLOCKED total={:.3}ms", domain, elapsed_ms);
-}
-
-fn log_forwarded(domain: &str, elapsed_ms: f64, from: SocketAddr) {
-    println!("[UDP] {} FORWARDED total={:.3}ms (from {})", domain, elapsed_ms, from);
-}
+use super::{MAX_DNS_PACKET_SIZE, Protocol, QueryLogger};
 
 /// UDP transport for DNS proxy.
 pub struct UdpTransport {
@@ -66,6 +58,7 @@ async fn run(
     resolver: Rc<Resolver>,
     verbose: bool,
 ) {
+    let logger = QueryLogger::new(Protocol::Udp);
     let mut pending: HashMap<u16, PendingQuery> = HashMap::new();
     let mut client_buf = [0u8; MAX_DNS_PACKET_SIZE];
     let mut upstream_bufs: Vec<[u8; MAX_DNS_PACKET_SIZE]> =
@@ -92,12 +85,18 @@ async fn run(
                 let query = &client_buf[..len];
 
                 match resolver.process_query(query) {
+                    QueryAction::Invalid => continue,
                     QueryAction::Blocked { response, domain } => {
                         let _ = socket.send_to(&response, src).await;
                         if verbose {
-                            log_blocked(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+                            logger.blocked(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
                         }
-                        continue;
+                    }
+                    QueryAction::Cached { response, domain } => {
+                        let _ = socket.send_to(&response, src).await;
+                        if verbose {
+                            logger.cached(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+                        }
                     }
                     QueryAction::Forward { domain } => {
                         let query_id = u16::from_be_bytes([client_buf[0], client_buf[1]]);
@@ -133,14 +132,13 @@ async fn run(
                 let query_id = u16::from_be_bytes([response[0], response[1]]);
 
                 if let Some(pq) = pending.remove(&query_id) {
-                    resolver.process_response(&[], response);
-
                     if let Err(e) = socket.send_to(response, pq.client_addr).await {
                         eprintln!("UDP response error: {}", e);
                     }
+                    resolver.process_response(response);
 
                     if verbose {
-                        log_forwarded(&pq.domain, pq.start_time.elapsed().as_secs_f64() * 1000.0, from_addr);
+                        logger.forwarded(&pq.domain, pq.start_time.elapsed().as_secs_f64() * 1000.0, None, from_addr);
                     }
                 }
             }

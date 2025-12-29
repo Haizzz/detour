@@ -13,15 +13,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::resolver::{QueryAction, Resolver};
 
-use super::MAX_DNS_PACKET_SIZE;
-
-fn log_blocked(domain: &str, elapsed_ms: f64) {
-    println!("[TCP] {} BLOCKED total={:.3}ms", domain, elapsed_ms);
-}
-
-fn log_forwarded(domain: &str, total_ms: f64, upstream_ms: f64, from: SocketAddr) {
-    println!("[TCP] {} FORWARDED total={:.3}ms upstream={:.3}ms (from {})", domain, total_ms, upstream_ms, from);
-}
+use super::{MAX_DNS_PACKET_SIZE, Protocol, QueryLogger};
 
 /// TCP transport for DNS proxy.
 pub struct TcpTransport {
@@ -68,6 +60,7 @@ async fn handle_connection(
     verbose: bool,
 ) {
     let start_time = Instant::now();
+    let logger = QueryLogger::new(Protocol::Tcp);
 
     let query_with_len = match read_dns_message(&mut client).await {
         Some(q) => q,
@@ -80,22 +73,29 @@ async fn handle_connection(
     let query = &query_with_len[2..];
 
     match resolver.process_query(query) {
+        QueryAction::Invalid => return,
         QueryAction::Blocked { response, domain } => {
             send_tcp_response(&mut client, &response).await;
             if verbose {
-                log_blocked(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+                logger.blocked(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        QueryAction::Cached { response, domain } => {
+            send_tcp_response(&mut client, &response).await;
+            if verbose {
+                logger.cached(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
             }
         }
         QueryAction::Forward { domain } => {
             let upstream_start = Instant::now();
             if let Some((response, winner)) = race_upstreams(query, &upstreams).await {
-                resolver.process_response(query, &response);
                 send_tcp_response(&mut client, &response).await;
+                resolver.process_response(&response);
                 if verbose {
-                    log_forwarded(
+                    logger.forwarded(
                         &domain,
                         start_time.elapsed().as_secs_f64() * 1000.0,
-                        upstream_start.elapsed().as_secs_f64() * 1000.0,
+                        Some(upstream_start.elapsed().as_secs_f64() * 1000.0),
                         winner,
                     );
                 }

@@ -179,7 +179,7 @@ fn start_tcp_proxy(proxy_addr: &str, upstream_addr: &str) {
         local.block_on(&rt, async {
             let transport = TcpTransport::bind(proxy_addr).await.unwrap();
             let resolver = Rc::new(Resolver::new(Blocklist::new()));
-            transport.start(upstream_addr, resolver);
+            transport.start(vec![upstream_addr], resolver, false);
             tx.send(()).unwrap(); // Signal ready
 
             loop {
@@ -201,9 +201,9 @@ fn start_udp_proxy(proxy_addr: &str, upstream_addr: &str) {
         let local = LocalSet::new();
 
         local.block_on(&rt, async {
-            let transport = UdpTransport::bind(proxy_addr).await.unwrap();
+            let transport = UdpTransport::bind(proxy_addr, 1).await.unwrap();
             let resolver = Rc::new(Resolver::new(Blocklist::new()));
-            transport.start(upstream_addr, resolver);
+            transport.start(vec![upstream_addr], resolver, false);
             tx.send(()).unwrap(); // Signal ready
 
             loop {

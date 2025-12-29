@@ -3,6 +3,8 @@
 //! Forwards DNS queries to an upstream server with optional ad-blocking.
 //! Supports both UDP and TCP transports.
 
+mod cache;
+mod dns;
 mod filter;
 mod proxy;
 mod resolver;

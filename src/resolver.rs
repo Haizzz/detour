@@ -2,25 +2,25 @@
 //!
 //! Handles the core query processing pipeline:
 //! 1. Filter (block ads/trackers)
-//! 2. Cache lookup (future)
+//! 2. Cache lookup
 //! 3. Decide whether to forward or return cached/blocked response
 //!
 //! Transports handle the actual I/O, resolver handles decisions.
 
-use crate::filter::{Blocklist, filter_query, get_domain};
+use crate::cache::DnsCache;
+use crate::dns::DnsQuery;
+use crate::filter::{Blocklist, filter_query};
 
 /// Action to take for a DNS query.
 pub enum QueryAction {
     /// Query is blocked, return this response immediately.
-    Blocked {
-        response: Vec<u8>,
-        domain: String,
-    },
+    Blocked { response: Vec<u8>, domain: String },
+    /// Query was found in cache, return this response immediately.
+    Cached { response: Vec<u8>, domain: String },
     /// Query should be forwarded to upstream.
-    Forward {
-        domain: String,
-    },
-    // Future: Cached(Vec<u8>), RaceUpstreams, etc.
+    Forward { domain: String },
+    /// Query could not be parsed.
+    Invalid,
 }
 
 /// Resolver handles DNS query processing decisions.
@@ -29,34 +29,44 @@ pub enum QueryAction {
 /// upstream selection, etc. Transports call this to decide what to do with queries.
 pub struct Resolver {
     blocklist: Blocklist,
-    // Future: cache, multiple upstreams, retry policy, etc.
+    cache: DnsCache,
 }
 
 impl Resolver {
     /// Create a new resolver with the given blocklist.
     pub fn new(blocklist: Blocklist) -> Self {
-        Self { blocklist }
+        Self {
+            blocklist,
+            cache: DnsCache::new(),
+        }
     }
 
     /// Process a DNS query and decide what action to take.
     ///
     /// This is the main entry point for transports. Call this with the raw
     /// DNS query (without TCP length prefix) to get the action to take.
-    pub fn process_query(&self, query: &[u8]) -> QueryAction {
-        let domain = get_domain(query).unwrap_or_else(|| "<unknown>".to_string());
+    pub fn process_query(&self, data: &[u8]) -> QueryAction {
+        let Some(query) = DnsQuery::parse(data) else {
+            return QueryAction::Invalid;
+        };
+
+        let domain = query.domain.clone();
 
         // Step 1: Check blocklist
-        if let Some(blocked_response) = filter_query(&self.blocklist, query) {
+        if let Some(blocked_response) = filter_query(&self.blocklist, &query) {
             return QueryAction::Blocked {
                 response: blocked_response,
                 domain,
             };
         }
 
-        // Step 2: TODO - Check cache
-        // if let Some(cached) = self.cache.get(query) {
-        //     return QueryAction::Cached(cached);
-        // }
+        // Step 2: Check cache
+        if let Some(cached_response) = self.cache.get(&query) {
+            return QueryAction::Cached {
+                response: cached_response,
+                domain,
+            };
+        }
 
         // Step 3: Forward to upstream
         QueryAction::Forward { domain }
@@ -64,10 +74,12 @@ impl Resolver {
 
     /// Called when we receive a response from upstream.
     ///
-    /// Used for caching, metrics, etc.
-    pub fn process_response(&self, _query: &[u8], _response: &[u8]) {
-        // TODO: Cache the response
-        // TODO: Update metrics
+    /// Caches the response. Parses the question from the response itself
+    /// (DNS responses include the question section).
+    pub fn process_response(&self, response: &[u8]) {
+        if let Some(query) = DnsQuery::parse(response) {
+            self.cache.put(&query, response);
+        }
     }
 
     /// Returns the number of domains in the blocklist.
