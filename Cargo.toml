@@ -16,3 +16,7 @@ rand = "0.9"
 name = "transport_bench"
 harness = false
 
+[[bench]]
+name = "blocklist_bench"
+harness = false
+
