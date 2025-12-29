@@ -1,15 +1,15 @@
-# detour
+# Detour
 
-Performance focused DNS proxy
-
-A minimal, single-threaded DNS proxy server written in Rust using tokio. Forwards DNS queries to an upstream server (default: Google DNS) over UDP and TCP without caching or filtering.
+A performance-focused DNS proxy written in Rust.
 
 ## Features
 
-- Single-threaded async runtime (tokio current_thread)
-- UDP and TCP DNS query support
-- Pass-through forwarding (no caching, no blocklists)
-- Configurable bind address and upstream server
+- **Single-threaded async** - Uses tokio's current_thread runtime for minimal overhead
+- **UDP and TCP support** - Full DNS transport support
+- **Response caching** - TTL-aware caching with configurable min/max bounds
+- **Ad blocking** - Optional blocklist support for filtering domains
+- **Upstream racing** - Queries multiple upstreams in parallel, uses first response
+- **Verbose logging** - Optional request logging with timing information
 
 ## Building
 
@@ -17,64 +17,113 @@ A minimal, single-threaded DNS proxy server written in Rust using tokio. Forward
 cargo build --release
 ```
 
-## Running
+## Usage
 
 ```bash
-# Default: listens on 127.0.0.1:5353, forwards to 8.8.8.8:53
-cargo run --release
+# Default: listens on 127.0.0.1:5353, forwards to Cloudflare + Google DNS
+./target/release/detour
 
-# Custom port
-cargo run --release -- --port 53
+# With verbose logging
+./target/release/detour -v
 
-# Custom upstream (Cloudflare)
-cargo run --release -- --upstream 1.1.1.1:53
+# Custom port (requires root/admin for port 53)
+sudo ./target/release/detour -p 53
+
+# Custom upstream server
+./target/release/detour -u 9.9.9.9:53
+
+# Multiple upstreams (races all, uses first response)
+./target/release/detour -u 1.1.1.1:53 -u 8.8.8.8:53
 
 # Listen on all interfaces
-cargo run --release -- --bind 0.0.0.0 --port 5353
+./target/release/detour -b 0.0.0.0
 ```
 
 ## CLI Options
 
 ```
+Usage: detour [OPTIONS]
+
 Options:
   -p, --port <PORT>          Local port to listen on [default: 5353]
   -b, --bind <BIND>          Bind address [default: 127.0.0.1]
-  -u, --upstream <UPSTREAM>  Upstream DNS server (host:port) [default: 8.8.8.8:53]
+  -u, --upstream <UPSTREAM>  Upstream DNS servers (host:port), races all and
+                             uses first response [default: 1.1.1.1:53 1.0.0.1:53
+                             8.8.8.8:53 8.8.4.4:53]
+  -v, --verbose              Print verbose logging (domain, blocked status, timing)
   -h, --help                 Print help
+```
+
+## Example Output
+
+With `-v` (verbose) flag:
+
+```
+Detour DNS proxy
+  Listening on 127.0.0.1:5353 (UDP + TCP)
+  Upstreams: 1.1.1.1:53, 1.0.0.1:53, 8.8.8.8:53, 8.8.4.4:53
+  Blocked domains: 0
+
+[2025-12-29 08:42:59] [UDP] google.com FORWARDED total=9.150ms (from 1.1.1.1:53)
+[2025-12-29 08:43:01] [UDP] google.com CACHED total=0.042ms
+[2025-12-29 08:43:05] [TCP] example.com FORWARDED total=12.304ms upstream=11.892ms (from 8.8.8.8:53)
+[2025-12-29 08:43:10] [UDP] ads.tracker.com BLOCKED total=0.015ms
 ```
 
 ## Testing
 
-Windows nslookup doesn't support custom ports. Use PowerShell instead:
+Using `dig` (Linux/macOS):
 
-**UDP test:**
-```powershell
-$query = [byte[]](0x00,0x01,0x01,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,
-  0x06,0x67,0x6f,0x6f,0x67,0x6c,0x65,0x03,0x63,0x6f,0x6d,0x00,0x00,0x01,0x00,0x01)
-$udp = New-Object System.Net.Sockets.UdpClient
-$udp.Send($query, $query.Length, "127.0.0.1", 5353)
-```
-
-**TCP test:**
-```powershell
-$query = [byte[]](0x00,0x1c,0x00,0x01,0x01,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,
-  0x06,0x67,0x6f,0x6f,0x67,0x6c,0x65,0x03,0x63,0x6f,0x6d,0x00,0x00,0x01,0x00,0x01)
-$tcp = New-Object System.Net.Sockets.TcpClient
-$tcp.Connect("127.0.0.1", 5353)
-$stream = $tcp.GetStream()
-$stream.Write($query, 0, $query.Length)
-$response = New-Object byte[] 512
-$n = $stream.Read($response, 0, 512)
-Write-Host "Received $n bytes"
-$tcp.Close()
-```
-
-On Linux/macOS with dig:
 ```bash
-dig @127.0.0.1 -p 5353 google.com        # UDP
-dig @127.0.0.1 -p 5353 +tcp google.com   # TCP
+# UDP query
+dig @127.0.0.1 -p 5353 google.com
+
+# TCP query
+dig @127.0.0.1 -p 5353 +tcp google.com
+
+# Query specific record type
+dig @127.0.0.1 -p 5353 google.com AAAA
 ```
 
-## License
+Using `nslookup` (Windows, after setting system DNS):
 
-MIT
+```cmd
+nslookup google.com 127.0.0.1
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Detour                             │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐                       │
+│  │ UDP Transport│  │ TCP Transport│                      │
+│  └──────┬──────┘  └──────┬──────┘                       │
+│         │                │                              │
+│         └───────┬────────┘                              │
+│                 ▼                                       │
+│         ┌─────────────┐                                 │
+│         │   Resolver  │                                 │
+│         └──────┬──────┘                                 │
+│                │                                        │
+│    ┌───────────┼───────────┐                            │
+│    ▼           ▼           ▼                            │
+│ ┌───────┐ ┌─────────┐ ┌──────────┐                      │
+│ │Filter │ │  Cache  │ │ Upstream │                      │
+│ └───────┘ └─────────┘ └──────────┘                      │
+└─────────────────────────────────────────────────────────┘
+```
+
+- **Transports** handle network I/O (UDP/TCP)
+- **Resolver** decides: block, return cached, or forward
+- **Filter** checks blocklist for ad/tracker domains
+- **Cache** stores responses with TTL-based expiration
+
+## Benchmarks
+
+Run benchmarks:
+
+```bash
+cargo bench
+```
