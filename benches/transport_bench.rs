@@ -6,7 +6,7 @@
 //! - Google (8.8.8.8): ~7-24ms average
 //! We simulate ~15ms average with ±5ms jitter.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, BenchmarkId, Criterion, Throughput};
 use rand::Rng;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -303,4 +303,9 @@ fn bench_udp_request(c: &mut Criterion) {
 }
 
 criterion_group!(benches, bench_tcp_request, bench_udp_request);
-criterion_main!(benches);
+
+fn main() {
+    benches();
+    criterion::Criterion::default().configure_from_args().final_summary();
+    std::process::exit(0);
+}
