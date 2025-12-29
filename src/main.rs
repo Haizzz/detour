@@ -1,9 +1,11 @@
 //! Detour - A performance focused DNS proxy.
 //!
-//! Forwards DNS queries to an upstream server without caching or filtering.
+//! Forwards DNS queries to an upstream server with optional ad-blocking.
 //! Supports both UDP and TCP transports.
 
+mod filter;
 mod proxy;
+mod resolver;
 mod transport;
 
 use clap::Parser;

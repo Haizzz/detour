@@ -8,9 +8,10 @@
 //!
 //! Also includes zero-latency benchmarks to measure pure proxy overhead.
 
-use criterion::{criterion_group, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use rand::Rng;
 use std::net::SocketAddr;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,6 +19,8 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::runtime::Runtime;
 use tokio::task::LocalSet;
 
+use detour::filter::Blocklist;
+use detour::resolver::Resolver;
 use detour::transport::tcp::TcpTransport;
 use detour::transport::udp::UdpTransport;
 
@@ -175,7 +178,8 @@ fn start_tcp_proxy(proxy_addr: &str, upstream_addr: &str) {
 
         local.block_on(&rt, async {
             let transport = TcpTransport::bind(proxy_addr).await.unwrap();
-            transport.start(upstream_addr);
+            let resolver = Rc::new(Resolver::new(Blocklist::new()));
+            transport.start(upstream_addr, resolver);
             tx.send(()).unwrap(); // Signal ready
 
             loop {
@@ -198,7 +202,8 @@ fn start_udp_proxy(proxy_addr: &str, upstream_addr: &str) {
 
         local.block_on(&rt, async {
             let transport = UdpTransport::bind(proxy_addr).await.unwrap();
-            transport.start(upstream_addr);
+            let resolver = Rc::new(Resolver::new(Blocklist::new()));
+            transport.start(upstream_addr, resolver);
             tx.send(()).unwrap(); // Signal ready
 
             loop {

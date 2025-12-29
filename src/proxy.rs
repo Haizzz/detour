@@ -4,7 +4,10 @@
 
 use std::io;
 use std::net::SocketAddr;
+use std::rc::Rc;
 
+use crate::filter::Blocklist;
+use crate::resolver::Resolver;
 use crate::transport::{tcp::TcpTransport, udp::UdpTransport};
 
 /// Configuration for the DNS proxy.
@@ -20,14 +23,21 @@ pub struct ProxyConfig {
 /// Starts UDP and TCP transports on the bind address and forwards
 /// all queries to the upstream server. Runs indefinitely.
 pub async fn run(config: ProxyConfig) -> io::Result<()> {
-    println!("DNS proxy listening on {}", config.bind_addr);
+    let blocklist = Blocklist::new();
+    let resolver = Rc::new(Resolver::new(blocklist));
+
+    println!(
+        "DNS proxy listening on {} ({} domains blocked)",
+        config.bind_addr,
+        resolver.blocked_count()
+    );
     println!("Forwarding to upstream: {}", config.upstream_addr);
 
     let udp = UdpTransport::bind(config.bind_addr).await?;
     let tcp = TcpTransport::bind(config.bind_addr).await?;
 
-    udp.start(config.upstream_addr);
-    tcp.start(config.upstream_addr);
+    udp.start(config.upstream_addr, resolver.clone());
+    tcp.start(config.upstream_addr, resolver);
 
     // Keep running forever
     std::future::pending::<()>().await;
