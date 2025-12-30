@@ -11,13 +11,12 @@
 use criterion::{BenchmarkId, Criterion, Throughput};
 use rand::Rng;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::runtime::Runtime;
-use tokio::task::LocalSet;
 
 use detour::filter::Blocklist;
 use detour::resolver::Resolver;
@@ -174,11 +173,10 @@ fn start_tcp_proxy(proxy_addr: &str, upstream_addr: &str) {
 
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
-        let local = LocalSet::new();
 
-        local.block_on(&rt, async {
+        rt.block_on(async {
             let transport = TcpTransport::bind(proxy_addr).await.unwrap();
-            let resolver = Rc::new(Resolver::new(Blocklist::new()));
+            let resolver = Arc::new(Resolver::new(Blocklist::new()));
             transport.start(vec![upstream_addr], resolver, false);
             tx.send(()).unwrap(); // Signal ready
 
@@ -198,11 +196,10 @@ fn start_udp_proxy(proxy_addr: &str, upstream_addr: &str) {
 
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
-        let local = LocalSet::new();
 
-        local.block_on(&rt, async {
+        rt.block_on(async {
             let transport = UdpTransport::bind(proxy_addr, 1).await.unwrap();
-            let resolver = Rc::new(Resolver::new(Blocklist::new()));
+            let resolver = Arc::new(Resolver::new(Blocklist::new()));
             transport.start(vec![upstream_addr], resolver, false);
             tx.send(()).unwrap(); // Signal ready
 

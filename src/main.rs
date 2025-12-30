@@ -41,6 +41,10 @@ struct Args {
     /// Print verbose logging (domain, blocked status, timing)
     #[arg(short, long)]
     verbose: bool,
+
+    /// Number of worker threads (default: 2 per CPU core, minimum 2)
+    #[arg(short, long)]
+    workers: Option<usize>,
 }
 
 #[derive(Subcommand)]
@@ -77,12 +81,18 @@ fn main() -> io::Result<()> {
         verbose: args.verbose,
     };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    let workers = args.workers.unwrap_or_else(|| {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        (cores * 2).max(2)
+    });
 
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, proxy::run(config))
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .enable_all()
+        .build()?
+        .block_on(proxy::run(config))
 }
 
 const SERVICE_FILE: &str = include_str!("../detour.service");

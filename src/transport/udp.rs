@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::UdpSocket;
@@ -34,8 +33,8 @@ impl UdpTransport {
     }
 
     /// Start the UDP transport.
-    pub fn start(self, upstreams: Vec<SocketAddr>, resolver: Rc<Resolver>, verbose: bool) {
-        tokio::task::spawn_local(run(
+    pub fn start(self, upstreams: Vec<SocketAddr>, resolver: Arc<Resolver>, verbose: bool) {
+        tokio::spawn(run(
             self.socket,
             self.upstream_sockets,
             upstreams,
@@ -56,7 +55,7 @@ async fn run(
     socket: Arc<UdpSocket>,
     upstream_sockets: Vec<Arc<UdpSocket>>,
     upstreams: Vec<SocketAddr>,
-    resolver: Rc<Resolver>,
+    resolver: Arc<Resolver>,
     verbose: bool,
 ) {
     let logger = QueryLogger::new(Protocol::Udp);

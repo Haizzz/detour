@@ -4,7 +4,7 @@
 
 use std::io;
 use std::net::SocketAddr;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::filter::Blocklist;
 use crate::resolver::Resolver;
@@ -26,7 +26,7 @@ pub struct ProxyConfig {
 /// all queries to the upstream server. Runs indefinitely.
 pub async fn run(config: ProxyConfig) -> io::Result<()> {
     let blocklist = Blocklist::new();
-    let resolver = Rc::new(Resolver::new(blocklist));
+    let resolver = Arc::new(Resolver::new(blocklist));
 
     println!(
         "DNS proxy listening on {} ({} domains blocked)",

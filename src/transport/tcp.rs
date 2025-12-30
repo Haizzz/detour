@@ -6,7 +6,7 @@
 
 use std::io;
 use std::net::SocketAddr;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -28,15 +28,15 @@ impl TcpTransport {
     }
 
     /// Start the TCP transport.
-    pub fn start(self, upstreams: Vec<SocketAddr>, resolver: Rc<Resolver>, verbose: bool) {
-        tokio::task::spawn_local(run_accept_loop(self.listener, upstreams, resolver, verbose));
+    pub fn start(self, upstreams: Vec<SocketAddr>, resolver: Arc<Resolver>, verbose: bool) {
+        tokio::spawn(run_accept_loop(self.listener, upstreams, resolver, verbose));
     }
 }
 
 async fn run_accept_loop(
     listener: TcpListener,
     upstreams: Vec<SocketAddr>,
-    resolver: Rc<Resolver>,
+    resolver: Arc<Resolver>,
     verbose: bool,
 ) {
     loop {
@@ -44,7 +44,7 @@ async fn run_accept_loop(
             Ok((client, _)) => {
                 let resolver = resolver.clone();
                 let upstreams = upstreams.clone();
-                tokio::task::spawn_local(handle_connection(client, upstreams, resolver, verbose));
+                tokio::spawn(handle_connection(client, upstreams, resolver, verbose));
             }
             Err(e) => {
                 eprintln!("TCP accept error: {}", e);
@@ -56,7 +56,7 @@ async fn run_accept_loop(
 async fn handle_connection(
     mut client: TcpStream,
     upstreams: Vec<SocketAddr>,
-    resolver: Rc<Resolver>,
+    resolver: Arc<Resolver>,
     verbose: bool,
 ) {
     let start_time = Instant::now();
@@ -73,7 +73,7 @@ async fn handle_connection(
     let query = &query_with_len[2..];
 
     match resolver.process_query(query) {
-        QueryAction::Invalid => return,
+        QueryAction::Invalid => (),
         QueryAction::Blocked { response, domain } => {
             send_tcp_response(&mut client, &response).await;
             if verbose {
