@@ -19,6 +19,8 @@ pub struct ProxyConfig {
     pub upstreams: Vec<SocketAddr>,
     /// Enable verbose logging (domain, blocked status, timing)
     pub verbose: bool,
+    /// Number of worker threads
+    pub workers: usize,
 }
 
 /// Run the DNS proxy with the given configuration.
@@ -30,9 +32,10 @@ pub async fn run(config: ProxyConfig) -> io::Result<()> {
     let resolver = Arc::new(Resolver::new(blocklist));
 
     println!(
-        "DNS proxy listening on {} ({} domains blocked)",
+        "DNS proxy listening on {} ({} domains blocked, {} workers)",
         config.bind_addr,
-        resolver.blocked_count()
+        resolver.blocked_count(),
+        config.workers
     );
     let upstream_strs: Vec<_> = config.upstreams.iter().map(|a| a.to_string()).collect();
     println!("Racing upstreams: {}", upstream_strs.join(", "));

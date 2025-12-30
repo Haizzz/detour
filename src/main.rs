@@ -76,21 +76,22 @@ fn main() -> io::Result<()> {
         .map(|s| s.parse().expect("invalid upstream address"))
         .collect();
 
-    let config = proxy::ProxyConfig {
-        bind_addr,
-        upstreams,
-        verbose: args.verbose,
-    };
-
     let workers = args.workers.unwrap_or_else(|| {
         let cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        (cores * 2).max(2)
+        cores * 2
     });
 
+    let config = proxy::ProxyConfig {
+        bind_addr,
+        upstreams,
+        verbose: args.verbose,
+        workers,
+    };
+
     tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(workers)
+        .worker_threads(config.workers)
         .enable_all()
         .build()?
         .block_on(proxy::run(config))
