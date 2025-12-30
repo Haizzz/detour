@@ -5,8 +5,14 @@
 
 use std::collections::HashSet;
 
-/// Embedded blocklist of ad domains, loaded at compile time.
-const DOMAINS_LIST: &str = include_str!("domains.txt");
+/// Embedded blocklists loaded at compile time.
+const LISTS: &[&str] = &[
+    include_str!("lists/Adaway.txt"),
+    include_str!("lists/AdguardDNS.txt"),
+    include_str!("lists/Easylist.txt"),
+    include_str!("lists/Easyprivacy.txt"),
+    include_str!("lists/Phishing_army_blocklist_extended.txt"),
+];
 
 /// A set of blocked domains for efficient lookup.
 pub struct Blocklist {
@@ -14,13 +20,14 @@ pub struct Blocklist {
 }
 
 impl Blocklist {
-    /// Create a new blocklist from the embedded domains list.
+    /// Create a new blocklist from the embedded domains lists.
     pub fn new() -> Self {
-        let domains = DOMAINS_LIST
-            .lines()
+        let domains = LISTS
+            .iter()
+            .flat_map(|list| list.lines())
             .filter_map(|line| {
                 let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
+                if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
                     return None;
                 }
                 Some(line.to_lowercase())
