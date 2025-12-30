@@ -15,6 +15,7 @@ pub struct DnsQuery {
 
 impl DnsQuery {
     /// Parse a DNS query from raw bytes.
+    /// Domain is normalized to ASCII lowercase in a single pass.
     pub fn parse(data: &[u8]) -> Option<Self> {
         if data.len() < HEADER_LEN + 1 {
             return None;
@@ -22,39 +23,42 @@ impl DnsQuery {
 
         let id = u16::from_be_bytes([data[0], data[1]]);
 
-        // Parse domain name
         let mut pos = HEADER_LEN;
-        let mut domain_parts = Vec::new();
+        let mut domain = String::with_capacity(64);
+        let mut first_label = true;
 
         while pos < data.len() {
             let label_len = data[pos] as usize;
+            pos += 1;
             if label_len == 0 {
-                pos += 1;
                 break;
             }
-            pos += 1;
             if pos + label_len > data.len() {
                 return None;
             }
-            let label = std::str::from_utf8(&data[pos..pos + label_len]).ok()?;
-            domain_parts.push(label.to_string());
+
+            if !first_label {
+                domain.push('.');
+            } else {
+                first_label = false;
+            }
+
+            for &b in &data[pos..pos + label_len] {
+                domain.push((b as char).to_ascii_lowercase());
+            }
             pos += label_len;
         }
 
-        if domain_parts.is_empty() {
+        if domain.is_empty() || pos + 4 > data.len() {
             return None;
         }
 
-        // Parse QTYPE and QCLASS
-        if pos + 4 > data.len() {
-            return None;
-        }
         let qtype = u16::from_be_bytes([data[pos], data[pos + 1]]);
         let qclass = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
 
         Some(Self {
             id,
-            domain: domain_parts.join(".").to_lowercase(),
+            domain,
             qtype,
             qclass,
         })

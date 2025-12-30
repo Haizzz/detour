@@ -3,7 +3,7 @@
 //! Loads a static list of domains at compile time and provides
 //! efficient lookup for blocked domains.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 /// Embedded blocklists loaded at compile time.
 const LISTS: &[&str] = &[
@@ -16,7 +16,7 @@ const LISTS: &[&str] = &[
 
 /// A set of blocked domains for efficient lookup.
 pub struct Blocklist {
-    domains: HashSet<String>,
+    domains: FxHashSet<String>,
 }
 
 impl Blocklist {
@@ -30,21 +30,17 @@ impl Blocklist {
                 if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
                     return None;
                 }
-                Some(line.to_lowercase())
+                Some(line.to_ascii_lowercase())
             })
             .collect();
 
         Self { domains }
     }
 
-    /// Check if a domain should be blocked.
-    ///
-    /// Performs exact match and subdomain matching (e.g., blocks
-    /// "ads.example.com" if "example.com" is in the blocklist).
+    /// Check if a domain should be blocked (hot path, assumes already lowercase ASCII).
+    #[inline]
     pub fn is_blocked(&self, domain: &str) -> bool {
-        let domain = domain.to_lowercase();
-        let mut current = domain.as_str();
-
+        let mut current = domain;
         loop {
             if self.domains.contains(current) {
                 return true;
@@ -98,8 +94,9 @@ mod tests {
     fn is_blocked_case_insensitive() {
         let blocklist = Blocklist::new();
 
-        assert!(blocklist.is_blocked("DOUBLECLICK.COM"));
-        assert!(blocklist.is_blocked("ADS.doubleclick.com"));
+        // is_blocked assumes pre-lowercased input (from DnsQuery::parse)
+        assert!(blocklist.is_blocked("doubleclick.com"));
+        assert!(blocklist.is_blocked("ads.doubleclick.com"));
     }
 
     #[test]
