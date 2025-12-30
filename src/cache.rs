@@ -1,12 +1,11 @@
 //! DNS response cache with TTL-based expiration.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use crate::dns::{DnsQuery, DnsResponse};
 
-/// A cached DNS response with expiration time.
 struct CacheEntry {
     response: Vec<u8>,
     expires_at: Instant,
@@ -14,77 +13,65 @@ struct CacheEntry {
 
 /// TTL-based DNS cache.
 ///
-/// Caches responses keyed by (domain, query_type) with automatic expiration.
+/// Uses a 2-level map (qtype -> domain -> entry) to avoid allocations on lookup.
 pub struct DnsCache {
-    entries: RwLock<HashMap<CacheKey, CacheEntry>>,
+    entries: RwLock<FxHashMap<u16, FxHashMap<String, CacheEntry>>>,
     min_ttl: Duration,
     max_ttl: Duration,
 }
 
-#[derive(Hash, Eq, PartialEq, Clone)]
-struct CacheKey {
-    domain: String,
-    qtype: u16,
-}
-
 impl DnsCache {
-    /// Create a new cache with default TTL bounds.
     pub fn new() -> Self {
         Self {
-            entries: RwLock::new(HashMap::new()),
+            entries: RwLock::new(FxHashMap::default()),
             min_ttl: Duration::from_secs(60),
             max_ttl: Duration::from_secs(86400),
         }
     }
 
-    /// Look up a cached response for the given query.
-    ///
-    /// Returns the cached response with the query ID replaced to match the incoming query.
+    /// Look up a cached response (no allocation on hit or miss).
     pub fn get(&self, query: &DnsQuery) -> Option<Vec<u8>> {
-        let key = CacheKey {
-            domain: query.domain.clone(),
-            qtype: query.qtype,
-        };
+        let now = Instant::now();
+        let domain = query.domain.as_str();
 
         {
             let Ok(entries) = self.entries.read() else {
                 return None;
             };
-            if let Some(entry) = entries.get(&key)
-                && Instant::now() < entry.expires_at
-            {
-                return query.response_from_cache(&entry.response);
+            if let Some(inner) = entries.get(&query.qtype) {
+                if let Some(entry) = inner.get(domain) {
+                    if now < entry.expires_at {
+                        return query.response_from_cache(&entry.response);
+                    }
+                }
             }
         }
 
         let Ok(mut entries) = self.entries.write() else {
             return None;
         };
-        if let Some(entry) = entries.get(&key)
-            && Instant::now() >= entry.expires_at
-        {
-            entries.remove(&key);
+        if let Some(inner) = entries.get_mut(&query.qtype) {
+            if let Some(entry) = inner.get(domain) {
+                if now >= entry.expires_at {
+                    inner.remove(domain);
+                }
+            }
         }
         None
     }
 
-    /// Store a response in the cache.
-    ///
-    /// Extracts TTL from the response and caches with appropriate expiration.
+    /// Store a response in the cache (allocates only on insert).
     pub fn put(&self, query: &DnsQuery, response: &[u8]) {
-        let key = CacheKey {
-            domain: query.domain.clone(),
-            qtype: query.qtype,
-        };
-
         let ttl = DnsResponse::parse_min_ttl(response, self.min_ttl);
         let ttl = ttl.clamp(self.min_ttl, self.max_ttl);
 
         let Ok(mut entries) = self.entries.write() else {
             return;
         };
-        entries.insert(
-            key,
+
+        let inner = entries.entry(query.qtype).or_default();
+        inner.insert(
+            query.domain.clone(),
             CacheEntry {
                 response: response.to_vec(),
                 expires_at: Instant::now() + ttl,
@@ -93,7 +80,10 @@ impl DnsCache {
     }
 
     pub fn len(&self) -> usize {
-        self.entries.read().map(|e| e.len()).unwrap_or(0)
+        self.entries
+            .read()
+            .map(|e| e.values().map(|inner| inner.len()).sum())
+            .unwrap_or(0)
     }
 }
 

@@ -11,9 +11,12 @@
 use criterion::{BenchmarkId, Criterion, Throughput};
 use rand::Rng;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
+
+static QUERY_COUNTER: AtomicU64 = AtomicU64::new(0);
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::runtime::Runtime;
@@ -42,6 +45,9 @@ const BASE_LATENCY_MS: u64 = 15;
 const JITTER_MS: u64 = 5;
 
 fn build_dns_query() -> Vec<u8> {
+    let n = QUERY_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let subdomain = format!("q{}", n);
+    
     let mut query = Vec::new();
     query.extend_from_slice(&[0x12, 0x34]); // Query ID
     query.extend_from_slice(&[0x01, 0x00]); // Flags: standard query
@@ -49,7 +55,9 @@ fn build_dns_query() -> Vec<u8> {
     query.extend_from_slice(&[0x00, 0x00]); // Answer RRs: 0
     query.extend_from_slice(&[0x00, 0x00]); // Authority RRs: 0
     query.extend_from_slice(&[0x00, 0x00]); // Additional RRs: 0
-    // Query for "example.com"
+    // Query for "qN.example.com"
+    query.push(subdomain.len() as u8);
+    query.extend_from_slice(subdomain.as_bytes());
     query.extend_from_slice(&[0x07]); // length of "example"
     query.extend_from_slice(b"example");
     query.extend_from_slice(&[0x03]); // length of "com"
