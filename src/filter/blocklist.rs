@@ -1,12 +1,11 @@
 //! Blocklist for ad/tracking domains.
 //!
-//! Loads a static list of domains at compile time and provides
-//! efficient lookup for blocked domains.
+//! Loads domains from embedded lists or a custom file path.
 
 use rustc_hash::FxHashSet;
 
 /// Embedded blocklists loaded at compile time.
-const LISTS: &[&str] = &[
+const EMBEDDED_LISTS: &[&str] = &[
     include_str!("lists/Adaway.txt"),
     include_str!("lists/AdguardDNS.txt"),
     include_str!("lists/Easylist.txt"),
@@ -22,8 +21,17 @@ pub struct Blocklist {
 impl Blocklist {
     /// Create a new blocklist from the embedded domains lists.
     pub fn new() -> Self {
-        let domains = LISTS
-            .iter()
+        Self::from_lists(EMBEDDED_LISTS.iter().copied())
+    }
+
+    /// Create a blocklist from a custom file path (replaces embedded lists).
+    pub fn from_file(path: &str) -> std::io::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(Self::from_lists(std::iter::once(content.as_str())))
+    }
+
+    fn from_lists<'a>(lists: impl Iterator<Item = &'a str>) -> Self {
+        let domains = lists
             .flat_map(|list| list.lines())
             .filter_map(|line| {
                 let line = line.trim();

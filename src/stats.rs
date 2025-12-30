@@ -1,7 +1,6 @@
 //! Statistics tracking for DNS proxy.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 /// Atomic statistics for tracking proxy performance.
 pub struct Stats {
@@ -11,7 +10,6 @@ pub struct Stats {
     pub blocked: AtomicU64,
     /// Cumulative response time in microseconds for averaging.
     total_response_time_us: AtomicU64,
-    start_time: Instant,
 }
 
 impl Stats {
@@ -22,7 +20,6 @@ impl Stats {
             cached: AtomicU64::new(0),
             blocked: AtomicU64::new(0),
             total_response_time_us: AtomicU64::new(0),
-            start_time: Instant::now(),
         }
     }
 
@@ -66,7 +63,6 @@ impl Stats {
             cached,
             blocked,
             avg_response_ms,
-            uptime_secs: self.start_time.elapsed().as_secs(),
         }
     }
 }
@@ -83,5 +79,4 @@ pub struct StatsSnapshot {
     pub cached: u64,
     pub blocked: u64,
     pub avg_response_ms: f64,
-    pub uptime_secs: u64,
 }

@@ -21,6 +21,8 @@ pub struct ProxyConfig {
     pub verbose: bool,
     /// Number of worker threads
     pub workers: usize,
+    /// Custom blocklist file path (None = use embedded lists)
+    pub blocklist_path: Option<String>,
 }
 
 /// Run the DNS proxy with the given configuration.
@@ -28,7 +30,10 @@ pub struct ProxyConfig {
 /// Starts UDP and TCP transports on the bind address and forwards
 /// all queries to the upstream server. Runs indefinitely.
 pub async fn run(config: ProxyConfig) -> io::Result<()> {
-    let blocklist = Blocklist::new();
+    let blocklist = match &config.blocklist_path {
+        Some(path) => Blocklist::from_file(path)?,
+        None => Blocklist::new(),
+    };
     let resolver = Arc::new(Resolver::new(blocklist));
 
     println!(
@@ -54,14 +59,19 @@ pub async fn run(config: ProxyConfig) -> io::Result<()> {
             interval.tick().await;
             let stats = resolver.stats_snapshot_and_reset();
             let cache_len = resolver.cache_len();
+            let cache_hit_pct = if stats.requests > 0 {
+                (stats.cached as f64 / stats.requests as f64) * 100.0
+            } else {
+                0.0
+            };
             println!(
-                "[stats] uptime={}s cache={} requests={} forwarded={} cached={} blocked={} avg_response={:.2}ms",
-                stats.uptime_secs,
+                "[stats] cache={} requests={} forwarded={} cached={} blocked={} cache_hit={:.1}% avg_response={:.2}ms",
                 cache_len,
                 stats.requests,
                 stats.forwarded,
                 stats.cached,
                 stats.blocked,
+                cache_hit_pct,
                 stats.avg_response_ms
             );
         }

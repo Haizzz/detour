@@ -46,6 +46,10 @@ struct Args {
     /// Number of worker threads (default: 2 per CPU core, minimum 2)
     #[arg(short, long)]
     workers: Option<usize>,
+
+    /// Path to custom blocklist file (replaces built-in lists)
+    #[arg(short = 'l', long)]
+    blocklist: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -88,6 +92,7 @@ fn main() -> io::Result<()> {
         upstreams,
         verbose: args.verbose,
         workers,
+        blocklist_path: args.blocklist,
     };
 
     tokio::runtime::Builder::new_multi_thread()
