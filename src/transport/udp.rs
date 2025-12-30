@@ -49,6 +49,7 @@ struct PendingQuery {
     client_addr: SocketAddr,
     domain: String,
     start_time: Instant,
+    upstream_start: Instant,
 }
 
 async fn run(
@@ -100,10 +101,12 @@ async fn run(
                     }
                     QueryAction::Forward { domain } => {
                         let query_id = u16::from_be_bytes([client_buf[0], client_buf[1]]);
+                        let upstream_start = Instant::now();
                         pending.insert(query_id, PendingQuery {
                             client_addr: src,
                             domain,
                             start_time,
+                            upstream_start,
                         });
 
                         for (i, upstream_addr) in upstreams.iter().enumerate() {
@@ -138,7 +141,7 @@ async fn run(
                     resolver.process_response(response);
 
                     if verbose {
-                        logger.forwarded(&pq.domain, pq.start_time.elapsed().as_secs_f64() * 1000.0, None, from_addr);
+                        logger.forwarded(&pq.domain, pq.start_time.elapsed().as_secs_f64() * 1000.0, pq.upstream_start.elapsed().as_secs_f64() * 1000.0, from_addr);
                     }
                 }
             }

@@ -95,7 +95,7 @@ async fn handle_connection(
                     logger.forwarded(
                         &domain,
                         start_time.elapsed().as_secs_f64() * 1000.0,
-                        Some(upstream_start.elapsed().as_secs_f64() * 1000.0),
+                        upstream_start.elapsed().as_secs_f64() * 1000.0,
                         winner,
                     );
                 }

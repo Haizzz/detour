@@ -94,6 +94,9 @@ fn install_service() -> io::Result<()> {
     let bin_path = "/usr/local/bin/detour";
     let service_path = "/etc/systemd/system/detour.service";
 
+    println!("Stopping existing service (if any)...");
+    let _ = Command::new("systemctl").args(["stop", "detour"]).status();
+
     println!("Copying {} to {}", exe.display(), bin_path);
     std::fs::copy(&exe, bin_path)?;
 

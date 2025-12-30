@@ -58,26 +58,16 @@ impl QueryLogger {
         );
     }
 
-    pub fn forwarded(&self, domain: &str, total_ms: f64, upstream_ms: Option<f64>, from: SocketAddr) {
-        match upstream_ms {
-            Some(upstream) => println!(
-                "[{}] [{}] {} FORWARDED total={:.3}ms upstream={:.3}ms (from {})",
-                timestamp(),
-                self.protocol.as_str(),
-                domain,
-                total_ms,
-                upstream,
-                from
-            ),
-            None => println!(
-                "[{}] [{}] {} FORWARDED total={:.3}ms (from {})",
-                timestamp(),
-                self.protocol.as_str(),
-                domain,
-                total_ms,
-                from
-            ),
-        }
+    pub fn forwarded(&self, domain: &str, total_ms: f64, upstream_ms: f64, from: SocketAddr) {
+        println!(
+            "[{}] [{}] {} FORWARDED total={:.3}ms upstream={:.3}ms (from {})",
+            timestamp(),
+            self.protocol.as_str(),
+            domain,
+            total_ms,
+            upstream_ms,
+            from
+        );
     }
 }
 
