@@ -47,7 +47,9 @@ impl DnsCache {
         };
 
         {
-            let entries = self.entries.read().unwrap();
+            let Ok(entries) = self.entries.read() else {
+                return None;
+            };
             if let Some(entry) = entries.get(&key)
                 && Instant::now() < entry.expires_at
             {
@@ -55,7 +57,9 @@ impl DnsCache {
             }
         }
 
-        let mut entries = self.entries.write().unwrap();
+        let Ok(mut entries) = self.entries.write() else {
+            return None;
+        };
         if let Some(entry) = entries.get(&key)
             && Instant::now() >= entry.expires_at
         {
@@ -76,13 +80,20 @@ impl DnsCache {
         let ttl = DnsResponse::parse_min_ttl(response, self.min_ttl);
         let ttl = ttl.clamp(self.min_ttl, self.max_ttl);
 
-        self.entries.write().unwrap().insert(
+        let Ok(mut entries) = self.entries.write() else {
+            return;
+        };
+        entries.insert(
             key,
             CacheEntry {
                 response: response.to_vec(),
                 expires_at: Instant::now() + ttl,
             },
         );
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.read().map(|e| e.len()).unwrap_or(0)
     }
 }
 

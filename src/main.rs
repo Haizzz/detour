@@ -8,6 +8,7 @@ mod dns;
 mod filter;
 mod proxy;
 mod resolver;
+mod stats;
 mod transport;
 
 use clap::{Parser, Subcommand};

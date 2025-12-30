@@ -10,6 +10,7 @@
 use crate::cache::DnsCache;
 use crate::dns::DnsQuery;
 use crate::filter::{Blocklist, filter_query};
+use crate::stats::{Stats, StatsSnapshot};
 
 /// Action to take for a DNS query.
 pub enum QueryAction {
@@ -30,6 +31,7 @@ pub enum QueryAction {
 pub struct Resolver {
     blocklist: Blocklist,
     cache: DnsCache,
+    stats: Stats,
 }
 
 impl Resolver {
@@ -38,6 +40,7 @@ impl Resolver {
         Self {
             blocklist,
             cache: DnsCache::new(),
+            stats: Stats::new(),
         }
     }
 
@@ -85,5 +88,30 @@ impl Resolver {
     /// Returns the number of domains in the blocklist.
     pub fn blocked_count(&self) -> usize {
         self.blocklist.len()
+    }
+
+    /// Returns the number of entries in the cache.
+    pub fn cache_len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Record a forwarded request with response time.
+    pub fn record_forwarded(&self, response_time_ms: f64) {
+        self.stats.record_forwarded(response_time_ms);
+    }
+
+    /// Record a cached response with response time.
+    pub fn record_cached(&self, response_time_ms: f64) {
+        self.stats.record_cached(response_time_ms);
+    }
+
+    /// Record a blocked request with response time.
+    pub fn record_blocked(&self, response_time_ms: f64) {
+        self.stats.record_blocked(response_time_ms);
+    }
+
+    /// Get a snapshot of current stats and reset counters.
+    pub fn stats_snapshot_and_reset(&self) -> StatsSnapshot {
+        self.stats.snapshot_and_reset()
     }
 }

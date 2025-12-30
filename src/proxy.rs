@@ -5,6 +5,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::filter::Blocklist;
 use crate::resolver::Resolver;
@@ -40,7 +41,28 @@ pub async fn run(config: ProxyConfig) -> io::Result<()> {
     let tcp = TcpTransport::bind(config.bind_addr).await?;
 
     udp.start(config.upstreams.clone(), resolver.clone(), config.verbose);
-    tcp.start(config.upstreams, resolver, config.verbose);
+    tcp.start(config.upstreams, resolver.clone(), config.verbose);
+
+    // Print stats every minute
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        interval.tick().await; // Skip first immediate tick
+        loop {
+            interval.tick().await;
+            let stats = resolver.stats_snapshot_and_reset();
+            let cache_len = resolver.cache_len();
+            println!(
+                "[stats] uptime={}s cache={} requests={} forwarded={} cached={} blocked={} avg_response={:.2}ms",
+                stats.uptime_secs,
+                cache_len,
+                stats.requests,
+                stats.forwarded,
+                stats.cached,
+                stats.blocked,
+                stats.avg_response_ms
+            );
+        }
+    });
 
     // Keep running forever
     std::future::pending::<()>().await;

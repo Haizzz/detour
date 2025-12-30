@@ -18,4 +18,5 @@ pub mod cache;
 pub mod dns;
 pub mod filter;
 pub mod resolver;
+pub mod stats;
 pub mod transport;

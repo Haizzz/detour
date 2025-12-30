@@ -74,7 +74,7 @@ impl QueryLogger {
 fn timestamp() -> String {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap();
+        .unwrap_or_default();
     let total_secs = now.as_secs();
     
     // Days since epoch

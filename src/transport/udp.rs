@@ -88,14 +88,18 @@ async fn run(
                     QueryAction::Invalid => continue,
                     QueryAction::Blocked { response, domain } => {
                         let _ = socket.send_to(&response, src).await;
+                        let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
+                        resolver.record_blocked(elapsed);
                         if verbose {
-                            logger.blocked(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+                            logger.blocked(&domain, elapsed);
                         }
                     }
                     QueryAction::Cached { response, domain } => {
                         let _ = socket.send_to(&response, src).await;
+                        let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
+                        resolver.record_cached(elapsed);
                         if verbose {
-                            logger.cached(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+                            logger.cached(&domain, elapsed);
                         }
                     }
                     QueryAction::Forward { domain } => {
@@ -139,8 +143,10 @@ async fn run(
                     }
                     resolver.process_response(response);
 
+                    let elapsed = pq.start_time.elapsed().as_secs_f64() * 1000.0;
+                    resolver.record_forwarded(elapsed);
                     if verbose {
-                        logger.forwarded(&pq.domain, pq.start_time.elapsed().as_secs_f64() * 1000.0, pq.upstream_start.elapsed().as_secs_f64() * 1000.0, from_addr);
+                        logger.forwarded(&pq.domain, elapsed, pq.upstream_start.elapsed().as_secs_f64() * 1000.0, from_addr);
                     }
                 }
             }

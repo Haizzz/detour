@@ -76,14 +76,18 @@ async fn handle_connection(
         QueryAction::Invalid => (),
         QueryAction::Blocked { response, domain } => {
             send_tcp_response(&mut client, &response).await;
+            let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
+            resolver.record_blocked(elapsed);
             if verbose {
-                logger.blocked(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+                logger.blocked(&domain, elapsed);
             }
         }
         QueryAction::Cached { response, domain } => {
             send_tcp_response(&mut client, &response).await;
+            let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
+            resolver.record_cached(elapsed);
             if verbose {
-                logger.cached(&domain, start_time.elapsed().as_secs_f64() * 1000.0);
+                logger.cached(&domain, elapsed);
             }
         }
         QueryAction::Forward { domain } => {
@@ -91,10 +95,12 @@ async fn handle_connection(
             if let Some((response, winner)) = race_upstreams(query, &upstreams).await {
                 send_tcp_response(&mut client, &response).await;
                 resolver.process_response(&response);
+                let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
+                resolver.record_forwarded(elapsed);
                 if verbose {
                     logger.forwarded(
                         &domain,
-                        start_time.elapsed().as_secs_f64() * 1000.0,
+                        elapsed,
                         upstream_start.elapsed().as_secs_f64() * 1000.0,
                         winner,
                     );
